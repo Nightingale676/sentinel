@@ -1,4 +1,4 @@
-# 🛡️ Sentinel
+# 🛡️Sentinel
 
 🎙️ Voice-secured demo payments using React, TypeScript, Node.js, Python, and DetectifAI. Faster Whisper transcribes audio locally; Eidos verifies speakers and Aletheia checks speech authenticity.
 
