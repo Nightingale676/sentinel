@@ -37,6 +37,3 @@ From `frontend`, run `npm.cmd test`, `npm.cmd run lint`, and `npm.cmd run build`
 
 Transfers update a demo balance; there is no banking integration. Accounts, payees, balances, and transaction history are stored in server memory. Enrollment metadata and used recording hashes persist in `private_runtime/`. Recording-hash checks are not full liveness protection. API keys, recordings, cached checks, and private runtime state are excluded from Git.
 
-## 🤝 Contributors
-
-- [@ayushdeepak05](https://github.com/ayushdeepak05) — Project contributor.
