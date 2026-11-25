@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+*.wav
+*.m4a
+saved_checks/
+private_runtime/
+.venv-1/
