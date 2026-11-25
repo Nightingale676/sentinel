@@ -1,0 +1,92 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: "Aalto", "Big Shoulders Display", system-ui, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-sans: "Instrument Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-paper: #F4F0E6;
+  --color-ink: #141414;
+  --color-accent-red: #B5473A;
+  --color-signal-red: #E5432E;
+  --color-indigo: #4B3BFF;
+  --color-blush: #F9CFD4;
+  --color-amber: #F2A93B;
+  --color-green: #2FA66A;
+}
+
+:root {
+  --bg-paper: #F4F0E6;
+  --ink: #141414;
+  --ink-muted: #47443E;
+  --ink-subtle: rgba(20, 20, 20, 0.055);
+  --accent-red: #B5473A;
+
+  --color-ink: #141414;
+  --color-paper: #F4F0E6;
+  --color-signal-red: #E5432E;
+  --color-indigo: #4B3BFF;
+  --color-blush: #F9CFD4;
+  --color-amber: #F2A93B;
+  --color-green: #2FA66A;
+}
+
+.dark {
+  --bg-paper: #141414;
+  --ink: #F4F0E6;
+  --ink-muted: #CFC9BC;
+  --ink-subtle: rgba(244, 240, 230, 0.08);
+  --accent-red: #DC6B5D;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    scroll-behavior: smooth;
+    background-color: var(--bg-paper);
+    color: var(--ink);
+  }
+
+  body {
+    font-size: 16px;
+    line-height: 1.55;
+    background-color: var(--bg-paper);
+    color: var(--ink);
+    transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+      color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  h1, .font-display {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    line-height: 0.9;
+    letter-spacing: -0.01em;
+  }
+
+  .font-serif-italic {
+    font-family: var(--font-serif);
+    font-style: italic;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-red);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

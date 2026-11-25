@@ -1,0 +1,6 @@
+{
+  "name": "Sentinel – Adaptive AI Voice Firewall",
+  "description": "Trust the person, not just the voice. Adaptive voice verification and fraud protection for everyday banking and assistant commands.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
