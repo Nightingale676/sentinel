@@ -28,6 +28,8 @@ import { formatCompactInr, formatInr } from '@/src/lib/inr';
 import { StatusBadge, type StatusKind } from '@/src/components/ui/StatusBadge';
 import { Button } from '@/src/components/ui/button';
 import { Skeleton } from '@/src/components/ui/skeleton';
+import { ClientRecordingPlayer } from '@/src/components/ClientRecordingPlayer';
+import { ClientVoiceHistory } from '@/src/components/ClientVoiceHistory';
 
 export type ClientSectionId = 'overview' | 'transactions' | 'voices' | 'apps';
 
@@ -306,22 +308,22 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
   }, []);
 
   const loadSummary = useCallback(
-    async (days: 7 | 30 | 90) => {
-      setSummaryLoading(true);
+    async (days: 7 | 30 | 90, background = false) => {
+      if (!background) setSummaryLoading(true);
       try {
         const res = await clientApi.getSummary(days);
         setSummary(res);
       } catch (err) {
         onToast(err instanceof Error ? err.message : 'Unable to load summary.', 'error');
       } finally {
-        setSummaryLoading(false);
+        if (!background) setSummaryLoading(false);
       }
     },
     [onToast]
   );
 
-  const loadTransactions = useCallback(async () => {
-    setTxLoading(true);
+  const loadTransactions = useCallback(async (background = false) => {
+    if (!background) setTxLoading(true);
     try {
       const res = await clientApi.getTransactions({
         tab: txTab,
@@ -340,12 +342,12 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Unable to load transactions.', 'error');
     } finally {
-      setTxLoading(false);
+      if (!background) setTxLoading(false);
     }
   }, [txTab, txQuery, txFrom, txTo, txPage, onToast]);
 
-  const loadVoices = useCallback(async () => {
-    setVoicesLoading(true);
+  const loadVoices = useCallback(async (background = false) => {
+    if (!background) setVoicesLoading(true);
     try {
       const res = await clientApi.getVoices();
       setVoices(res.items);
@@ -353,7 +355,7 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Unable to load voice profiles.', 'error');
     } finally {
-      setVoicesLoading(false);
+      if (!background) setVoicesLoading(false);
     }
   }, [onToast]);
 
@@ -381,6 +383,19 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
       loadApps();
     }
   }, [sessionUser, activeSection, rangeDays, loadSummary, loadTransactions, loadVoices, loadApps]);
+
+  useEffect(() => {
+    if (!sessionUser) return;
+    const refresh = () => {
+      if (document.hidden) return;
+      if (activeSection === 'overview') void loadSummary(rangeDays, true);
+      if (activeSection === 'transactions') void loadTransactions(true);
+      if (activeSection === 'voices') void loadVoices(true);
+    };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [sessionUser, activeSection, rangeDays, loadSummary, loadTransactions, loadVoices]);
 
   const handleLogin = async (loginEmail: string, loginPass: string) => {
     setLoginBusy(true);
@@ -1103,7 +1118,7 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                   <p className="mt-1 inline-flex items-center gap-2 text-base text-[var(--ink-muted)]">
                     <MicOff className="h-4 w-4 shrink-0" />
                     <span>
-                      Stored server-side as non-reversible vocal embeddings. Audio recordings are never stored or playable.
+                      Open a customer's recording history to see enrollment, verified, suspicious, and blocked attempts separately. Playback requires recording-retention consent. Older audio that was not retained cannot be recovered.
                     </span>
                   </p>
                 </div>
@@ -1119,7 +1134,7 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                 <Skeleton className="h-72 w-full" />
               ) : voices.length === 0 ? (
                 <div className="border border-[var(--ink)] p-8 text-center font-mono text-base text-[var(--ink-muted)]">
-                  No enrolled voices found for this organization.
+                  No enrolled voices yet. Customers enroll once from their account setup and consent to appearing in this organization's registry.
                 </div>
               ) : (
                 <div className="overflow-x-auto border border-[var(--ink)] bg-[var(--bg-paper)]">
@@ -1137,13 +1152,14 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                       {voices.map((voice) => (
                         <tr key={voice.id}>
                           <td className="px-4 py-3 font-mono font-medium text-[var(--ink)]">
+                            {voice.customerName && <span className="block">{voice.customerName}</span>}
                             {voice.customerRefMasked}
                           </td>
                           <td className="px-4 py-3 font-mono text-[var(--ink-muted)]">
                             {formatDateOnly(voice.enrolledAt)}
                           </td>
                           <td className="px-4 py-3 font-mono text-[var(--ink-muted)]">
-                            {formatDateOnly(voice.lastVerifiedAt)}
+                            {voice.lastVerifiedAt ? formatDateOnly(voice.lastVerifiedAt) : 'Not yet verified'}
                           </td>
                           <td className="px-4 py-3">
                             <StatusBadge
@@ -1154,7 +1170,7 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                             />
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <div className="inline-flex items-center justify-end gap-2">
+                            {voice.source === 'live' ? <ClientVoiceHistory key={voice.id} entries={voice.recordingHistory || [{ id: voice.id, recordingId: voice.recordingId, timestamp: voice.enrolledAt, action: 'Retained owner sample', status: 'Owner sample', reason: 'Refresh the page to load full recording history.' }]} isAdmin={isAdmin} /> : <div className="inline-flex items-center justify-end gap-2">
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1175,7 +1191,7 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                                 <Trash2 className="h-3.5 w-3.5" />
                                 <span>Delete</span>
                               </Button>
-                            </div>
+                            </div>}
                           </td>
                         </tr>
                       ))}
@@ -1395,6 +1411,12 @@ export function ClientDashboardPage({ onNavigateHome, onToast }: ClientDashboard
                     <p className="mt-1 text-base leading-relaxed text-[var(--ink)]">
                       {selectedTx.whatHappenedNext}
                     </p>
+                  </div>
+                  <div className="border border-[var(--ink)] p-4 space-y-2">
+                    <h4 className="font-mono text-base font-semibold uppercase">Attempt recording</h4>
+                    <p>This is the recording submitted for the account. A blocked voice match does not identify who actually spoke.</p>
+                    <ClientRecordingPlayer key={selectedTx.id} recordingId={selectedTx.recordingId} isAdmin={isAdmin} />
+                    {selectedTx.transcript && <p><strong>Transcript:</strong> {selectedTx.transcript}</p>}
                   </div>
                 </div>
               </div>

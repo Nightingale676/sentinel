@@ -25,6 +25,7 @@ import { AccountPage } from './pages/AccountPage';
 import { ClientDashboardPage } from './pages/ClientDashboardPage';
 import { Button } from './components/ui/button';
 import { Skeleton } from './components/ui/skeleton';
+import { AudioAnalysisPanel } from './components/AudioAnalysisPanel';
 
 const LandingSections = React.lazy(() =>
   import('./components/LandingSections').then((m) => ({ default: m.LandingSections }))
@@ -339,6 +340,12 @@ export default function App() {
             exit={prefersReduced ? undefined : { opacity: 0 }}
             transition={{ duration: 0.18 }}
           >
+            {isPortalRoute && user?.voiceVerificationRequired ? (
+              <div className="mx-auto max-w-3xl px-4 py-8">
+                <AudioAnalysisPanel onLoginVerified={verifiedUser => setUser(verifiedUser)} />
+                <Button variant="outline" onClick={handleLogout}>Sign out</Button>
+              </div>
+            ) : <>
             {route === '/' && (
               <>
                 <MetaGlassesPortalHero
@@ -444,6 +451,7 @@ export default function App() {
                 onToast={addToast}
               />
             )}
+            </>}
           </motion.div>
         </AnimatePresence>
       </main>

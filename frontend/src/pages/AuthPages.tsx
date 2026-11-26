@@ -39,7 +39,7 @@ export function AuthPages({
     try {
       const { user } = await apiClient.login({ email, password });
       onOfflineDetected(false);
-      onToast(`Welcome back, ${user.fullName.split(' ')[0]}`, 'success');
+      onToast(user.voiceVerificationRequired ? 'Password accepted. Verify your voice to finish signing in.' : `Welcome back, ${user.fullName.split(' ')[0]}`, user.voiceVerificationRequired ? 'info' : 'success');
       onAuthenticated(user);
     } catch (err) {
       if (err instanceof ApiError && err.isOffline) onOfflineDetected(true);

@@ -9,6 +9,7 @@ export interface PublicStats {
 }
 
 export interface CustomerUser {
+  voiceVerificationRequired?: boolean;
   id: string;
   email: string;
   fullName: string;
@@ -167,11 +168,17 @@ async function request<T>(
 }
 
 export const apiClient = {
-  voiceProfile(): Promise<{ enrolled: boolean }> { return request('/api/voice/profile'); },
-  enrollOwner(payload: { audio: string; suffix: string; consent: boolean }): Promise<{ enrolled: boolean; credits_used: number | null }> {
+  voiceProfile(): Promise<{ enrolled: boolean; registryLinked?: boolean; organizationName?: string }> { return request('/api/voice/profile'); },
+  verifyVoiceLogin(payload: { audio: string; suffix: string; recordingConsent?: boolean }): Promise<{ verified: boolean; user: CustomerUser }> {
+    return request('/api/voice/login-check', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  linkVoiceRegistry(): Promise<{ linked: boolean }> {
+    return request('/api/voice/registry-consent', { method: 'POST', body: JSON.stringify({ consent: true }) });
+  },
+  enrollOwner(payload: { audio: string; suffix: string; consent: boolean; registryConsent?: boolean; recordingConsent?: boolean }): Promise<{ enrolled: boolean; credits_used: number | null }> {
     return request('/api/voice/enroll', { method: 'POST', body: JSON.stringify(payload) });
   },
-  checkPayment(payload: { audio: string; suffix: string }): Promise<AnalysisResponse> {
+  checkPayment(payload: { audio: string; suffix: string; recordingConsent?: boolean }): Promise<AnalysisResponse> {
     return request('/api/voice/payment-check', { method: 'POST', body: JSON.stringify(payload) });
   },
   confirmVoiceTransfer(authorizationToken: string): Promise<{ message: string; updatedBalanceCents: number }> {

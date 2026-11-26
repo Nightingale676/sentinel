@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { runPythonAnalysis } from './src/lib/python-analysis.ts';
 import { VoicePayments } from './src/lib/voice-payments.ts';
+import { VoiceRecordings } from './src/lib/voice-recordings.ts';
+import { classifyRejectedVoice } from './src/lib/voice-audit.ts';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { evaluateVoiceCommand, type FirewallDecision } from './src/lib/sentinel-logic.ts';
@@ -110,6 +112,7 @@ function base64UrlDecode(input: string): string {
 }
 
 interface JwtClaims {
+  voiceVerified?: boolean;
   sub: string;
   exp: number;
   scope?: 'customer' | 'client';
@@ -147,6 +150,7 @@ function verifyJwt(token: string): JwtClaims | null {
       scope: parsed.scope,
       orgId: parsed.orgId,
       role: parsed.role,
+      voiceVerified: parsed.voiceVerified === true,
     };
   } catch {
     return null;
@@ -171,7 +175,7 @@ function setSessionCookies(
   res: Response,
   req: Request,
   userId: string,
-  extra?: { scope?: 'customer' | 'client'; orgId?: string; role?: ClientRole }
+  extra?: { scope?: 'customer' | 'client'; orgId?: string; role?: ClientRole; voiceVerified?: boolean }
 ): string {
   const token = signJwt({
     sub: userId,
@@ -236,7 +240,7 @@ let liveRequestsProtected = 482190;
 let liveThreatsBlocked = 19432;
 let liveDecisionMs = 138;
 
-const clientPortalStore = new ClientPortalStore();
+const clientPortalStore = new ClientPortalStore(Date.now(), path.resolve(__dirname, '..', 'private_runtime', 'client-ledger.json'));
 
 function seedDemoUser() {
   const email = 'alex.mercer@sentinelbank.example';
@@ -341,7 +345,7 @@ async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
   app.use((req, res, next) => {
-    if (req.path === '/api/analysis' || req.path === '/api/voice/enroll' || req.path === '/api/voice/payment-check') { next(); return; }
+    if (req.path === '/api/analysis' || req.path === '/api/voice/enroll' || req.path === '/api/voice/login-check' || req.path === '/api/voice/payment-check' || req.path === '/api/client/voices/enroll') { next(); return; }
     express.json({ limit: '1mb' })(req, res, next);
   });
 
@@ -413,6 +417,10 @@ async function startServer() {
     }
 
     req.currentUser = user;
+    if (voicePayments.profiles.has(user.id) && claims.voiceVerified !== true &&
+        !['/api/voice/profile', '/api/voice/login-check', '/api/auth/me'].includes(req.path)) {
+      res.status(403).json({ error: 'Verify your enrolled voice to finish signing in.' }); return;
+    }
     next();
   }
 
@@ -422,8 +430,76 @@ async function startServer() {
   });
   let analysisBusy = false;
   const voicePayments = new VoicePayments(path.resolve(__dirname, '..', 'private_runtime', 'voice-payments.json'));
+  const voiceRecordings = new VoiceRecordings(path.resolve(__dirname, '..', 'private_runtime', 'recordings'));
+  const pendingAudit = new Map<string, { userId: string; organizationId: string; transactionId: string }>();
+  const auditAttempt = (user: StoredUser, body: any, action: string, result: any, status: 'Allowed' | 'Blocked' | 'Suspicious', reason: string, amountPaise = 0) => {
+    const details = voicePayments.profiles.get(user.id)?.enrollment;
+    if (!details) return undefined;
+    let recordingId: string | undefined;
+    try { recordingId = voiceRecordings.save(details.organizationId, body.audio, body.suffix, body.recordingConsent); }
+    catch { reason += ' Recording could not be retained.'; }
+    if (!amountPaise && action === 'Voice payment attempt') {
+      const amounts = result?.report?.intent?.amounts;
+      if (Array.isArray(amounts) && amounts.length === 1 && amounts[0].currency === 'INR' && typeof amounts[0].value === 'number') {
+        const parsed = Math.round(amounts[0].value * 100);
+        if (Number.isSafeInteger(parsed) && parsed > 0) amountPaise = parsed;
+      }
+    }
+    const tx = clientPortalStore.ingestTransaction({ organization_id: details.organizationId,
+      appId: details.organizationId === 'org_aarohan_bank' ? 'app_mobile' : 'app_dakshin_mobile',
+      customerRef: details.customerReference, action, amount: amountPaise / 100, currency: 'INR', status,
+      reason, riskLevel: status === 'Allowed' ? 'Low' : status === 'Blocked' ? 'High' : 'Medium',
+      verificationOutcome: status === 'Suspicious' ? (result?.report?.speaker_status === 'match' && result?.report?.authenticity_status === 'genuine' ? 'Verified' : 'Not verified') : undefined,
+      whatHappenedNext: reason, recordingId, transcript: typeof result?.transcript === 'string' ? result.transcript : undefined });
+    if (result?.payment_checks_live === true && result?.report?.speaker_status === 'match' &&
+        result?.report?.authenticity_status === 'genuine' && result?.voice_checks?.deepfake_complete === true && result?.voice_checks?.decision === 'match') {
+      voicePayments.recordVerifiedAudio(user.id, recordingId);
+    }
+    return tx;
+  };
+  const failedStatus = classifyRejectedVoice;
+  const registryOrganization = { id: 'org_aarohan_bank', name: 'Aarohan Bank India' };
+  const registryDetails = (user: StoredUser) => ({ organizationId: registryOrganization.id,
+    customerName: user.fullName, customerReference: 'CUST-' + user.id.replace(/^usr_/, '').toUpperCase() });
+  const sessionUser = (user: StoredUser, verified: boolean) => ({ ...sanitizeUser(user),
+    voiceVerificationRequired: voicePayments.profiles.has(user.id) && !verified });
   app.get('/api/voice/profile', requireAuth, (req: AuthedRequest, res) => {
-    res.json({ enrolled: voicePayments.profiles.has(req.currentUser!.id) });
+    const profile = voicePayments.profiles.get(req.currentUser!.id);
+    res.json({ enrolled: !!profile, registryLinked: !!profile?.enrollment, organizationName: registryOrganization.name });
+  });
+  app.post('/api/voice/registry-consent', requireAuth, (req: AuthedRequest, res) => {
+    if (req.body?.consent !== true) { res.status(400).json({ error: 'Explicit registry consent is required.' }); return; }
+    try {
+      voicePayments.linkOrganization(req.currentUser!.id, registryDetails(req.currentUser!));
+      res.json({ linked: true });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Could not link the profile.' }); }
+  });
+  app.post('/api/voice/login-check', requireAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+    const user = req.currentUser!;
+    const profile = voicePayments.profiles.get(user.id);
+    if (!profile || typeof req.body?.audio !== 'string') { res.status(400).json({ error: 'An enrolled account and fresh recording are required.' }); return; }
+    if (analysisBusy) { res.status(429).json({ error: 'Another voice operation is running. Please wait.' }); return; }
+    if (voicePayments.isReplay(user.id, crypto.createHash('sha256').update(Buffer.from(req.body.audio, 'base64')).digest('hex'))) {
+      try { auditAttempt(user, req.body, 'Voice sign-in attempt', null, 'Blocked', 'Previously used recording rejected. No sign-in was authorized.'); }
+      catch { res.status(503).json({ error: 'Voice sign-in blocked. Audit storage is unavailable.' }); return; }
+      res.status(403).json({ error: 'Record a fresh sample. This recording has already been used.' }); return;
+    }
+    analysisBusy = true;
+    let loginResult: any;
+    try {
+      const result = await runPythonAnalysis({ audio: req.body.audio, suffix: req.body.suffix, live: true, payment: true, speaker_id: profile.speakerId }, path.resolve(__dirname, '..'));
+      loginResult = result;
+      if (result.error) { auditAttempt(user, req.body, 'Voice sign-in attempt', result, 'Suspicious', String(result.error)); res.status(422).json({ error: result.error }); return; }
+      voicePayments.verifyLogin(user.id, result);
+      auditAttempt(user, req.body, 'Voice sign-in verified', result, 'Allowed', 'Voice sign-in verified. No money was transferred.');
+      const csrfToken = setSessionCookies(res, req, user.id, { voiceVerified: true });
+      res.json({ verified: true, user: sessionUser(user, true), csrfToken });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Voice verification failed.';
+      try { auditAttempt(user, req.body, 'Voice sign-in attempt', loginResult, loginResult ? failedStatus(loginResult) : 'Suspicious', message); } catch { /* Return the operation failure even if the audit disk is unavailable. */ }
+      res.status(403).json({ error: message });
+    }
+    finally { analysisBusy = false; }
   });
   app.post('/api/voice/enroll', requireAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
     const user = req.currentUser!;
@@ -438,8 +514,11 @@ async function startServer() {
       if (result.enrolled !== true || result.speaker_id !== speakerId || typeof result.audio_sha256 !== 'string') {
         res.status(422).json({ error: result.error || 'Enrollment did not complete. Payments remain blocked.' }); return;
       }
-      voicePayments.register(user.id, speakerId, result.audio_sha256);
-      res.json({ enrolled: true, credits_used: result.credits_used });
+      const details = req.body.registryConsent === true ? registryDetails(user) : undefined;
+      const recordingId = details ? voiceRecordings.save(details.organizationId, req.body.audio, req.body.suffix, req.body.recordingConsent) : undefined;
+      voicePayments.register(user.id, speakerId, result.audio_sha256, details, recordingId);
+      const csrfToken = setSessionCookies(res, req, user.id, { voiceVerified: true });
+      res.json({ enrolled: true, credits_used: result.credits_used, csrfToken });
     } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : 'Enrollment unavailable.' }); }
     finally { analysisBusy = false; }
   });
@@ -449,6 +528,8 @@ async function startServer() {
     if (!profile) { res.status(403).json({ error: 'Payment blocked: enroll the owner voice with consent first.' }); return; }
     if (typeof req.body?.audio !== 'string') { res.status(400).json({ error: 'A fresh audio recording is required. Text cannot authorize payments.' }); return; }
     if (voicePayments.isReplay(user.id, crypto.createHash('sha256').update(Buffer.from(req.body.audio, 'base64')).digest('hex'))) {
+      try { auditAttempt(user, req.body, 'Voice payment attempt', null, 'Blocked', 'Previously used recording rejected. No money was transferred.'); }
+      catch { res.status(503).json({ error: 'Payment blocked. Audit storage is unavailable.' }); return; }
       res.status(403).json({ error: 'Payment blocked: record a fresh request. Enrollment audio and previously authorized clips cannot be reused.' }); return;
     }
     if (analysisBusy) { res.status(429).json({ error: 'Another voice operation is running. Please wait.' }); return; }
@@ -456,17 +537,26 @@ async function startServer() {
     try {
       const result = await runPythonAnalysis({ audio: req.body.audio, suffix: req.body.suffix,
         live: true, payment: true, speaker_id: profile.speakerId }, path.resolve(__dirname, '..'));
-      if (result.error) { res.status(422).json(result); return; }
+      if (result.error) { auditAttempt(user, req.body, 'Voice payment attempt', result, 'Suspicious', String(result.error)); res.status(422).json(result); return; }
       const payment = voicePayments.authorize(user.id, result, user.payees);
+      const amount = payment.amountCents ?? 0;
+      const audit = auditAttempt(user, req.body, 'Voice payment attempt', result, payment.eligible ? 'Suspicious' : failedStatus(result), payment.eligible ? 'Voice verified; awaiting explicit confirmation. No money transferred.' : payment.message, amount);
+      if (payment.authorizationToken && audit) pendingAudit.set(payment.authorizationToken, { userId: user.id, organizationId: audit.organization_id, transactionId: audit.id });
       user.activity.unshift({ id: 'act_' + crypto.randomUUID(), timestamp: new Date().toISOString(),
         actionSummary: String(result.transcript), channel: 'Live voice payment check', decision: payment.eligible ? 'step_up' : 'block',
         decisionLabel: payment.eligible ? 'Awaiting confirmation' : 'Payment blocked', explanation: payment.message, reportedUnauthorized: false });
       res.json({ ...result, payment });
-    } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : 'Verification unavailable. Payment blocked.' }); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Verification unavailable. Payment blocked.';
+      try { auditAttempt(user, req.body, 'Voice payment attempt', { error: true }, 'Suspicious', message); } catch { /* Preserve the original failure response. */ }
+      res.status(503).json({ error: message });
+    }
     finally { analysisBusy = false; }
   });
   app.post('/api/voice/transfer', requireAuth, (req: AuthedRequest, res) => {
     const user = req.currentUser!;
+    const candidateAudit = pendingAudit.get(req.body?.authorizationToken);
+    const audit = candidateAudit?.userId === user.id ? candidateAudit : undefined;
     try {
       if (typeof req.body?.authorizationToken !== 'string') throw new Error('A verified voice authorization is required.');
       const auth = voicePayments.consume(user.id, req.body.authorizationToken);
@@ -475,13 +565,20 @@ async function startServer() {
       const transaction: StoredUser['transactions'][number] = { id: 'tx_' + crypto.randomUUID(),
         title: 'Transfer to ' + auth.payeeName, counterparty: auth.payeeName, amountCents: auth.amountCents,
         direction: 'debit', createdAt: new Date().toISOString(), verificationLabel: 'Live owner match + genuine speech' };
+      if (audit) clientPortalStore.resolveTransaction(audit.organizationId, audit.transactionId, 'Allowed', 'Owner confirmed the verified transfer. Demo balance debited.');
+      if (audit) pendingAudit.delete(req.body.authorizationToken);
       user.balanceCents -= auth.amountCents;
       user.transactions.unshift(transaction);
       user.activity.unshift({ id: 'act_' + crypto.randomUUID(), timestamp: new Date().toISOString(),
         actionSummary: 'Confirmed transfer to ' + auth.payeeName, channel: 'Verified voice confirmation', decision: 'allow',
         decisionLabel: 'Voice verified', explanation: 'Matched the enrolled owner and passed speech authenticity checks before confirmation.', reportedUnauthorized: false });
       res.json({ message: 'Demo transfer completed after owner voice verification.', updatedBalanceCents: user.balanceCents });
-    } catch (error) { res.status(403).json({ error: error instanceof Error ? error.message : 'Payment blocked.' }); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Payment blocked.';
+      if (audit) clientPortalStore.resolveTransaction(audit.organizationId, audit.transactionId, 'Blocked', message);
+      if (audit) pendingAudit.delete(req.body?.authorizationToken);
+      res.status(403).json({ error: message });
+    }
   });
   app.post('/api/analysis', requireAuth, express.json({ limit: '17mb' }), async (req, res) => {
     if (analysisBusy) { res.status(429).json({ error: 'Another recording is being analyzed. Please wait.' }); return; }
@@ -596,7 +693,7 @@ async function startServer() {
       return;
     }
     const csrfToken = setSessionCookies(res, req, user.id);
-    res.json({ user: sanitizeUser(user), csrfToken });
+    res.json({ user: sessionUser(user, false), csrfToken });
   });
 
   app.post('/api/auth/logout', (req, res) => {
@@ -624,12 +721,13 @@ async function startServer() {
       res.json({ user: null });
       return;
     }
-    res.json({ user: sanitizeUser(user), csrfToken: cookies.sentinel_csrf });
+    res.json({ user: sessionUser(user, claims?.voiceVerified === true), csrfToken: cookies.sentinel_csrf });
   });
 
   app.get('/api/auth/me', requireAuth, (req: AuthedRequest, res) => {
     const cookies = parseCookies(req);
-    res.json({ user: sanitizeUser(req.currentUser!), csrfToken: cookies.sentinel_csrf });
+    const claims = cookies.sentinel_session ? verifyJwt(cookies.sentinel_session) : null;
+    res.json({ user: sessionUser(req.currentUser!, claims?.voiceVerified === true), csrfToken: cookies.sentinel_csrf });
   });
 
   // Onboarding routes
@@ -650,6 +748,9 @@ async function startServer() {
     if (consentAccepted !== true) {
       res.status(400).json({ error: 'Please review and accept voice protection consent.' });
       return;
+    }
+    if (!voicePayments.profiles.has(user.id)) {
+      res.status(400).json({ error: 'Complete real owner voice enrollment before finishing setup.' }); return;
     }
     if (typeof passphrase !== 'string' || passphrase.trim().length < 4) {
       res.status(400).json({ error: 'Please set a personal passphrase (at least 4 characters).' });
@@ -856,35 +957,65 @@ async function startServer() {
   });
 
   app.get('/api/client/voices', requireClientAuth, (req: AuthedRequest, res) => {
-    res.json(clientPortalStore.listVoices(req.currentClientUser!.organization_id));
+    const orgId = req.currentClientUser!.organization_id;
+    const voices = voicePayments.listOrganizationVoices(orgId);
+    const items = voices.items.map(voice => {
+      const attempts = clientPortalStore.listVoiceAttempts(orgId, voice.customerRefMasked);
+      const profile = voicePayments.profiles.get(voice.id)!;
+      const enrollmentRecordingId = voiceRecordings.findByHash(orgId, profile.enrollmentHash);
+      const history: import('./src/lib/client-portal-service.ts').VoiceRecordingEntry[] = [{
+        id: 'enrollment-' + voice.id, recordingId: enrollmentRecordingId, timestamp: voice.enrolledAt,
+        action: 'Original voice enrollment', status: 'Enrollment',
+        reason: enrollmentRecordingId ? 'Original retained enrollment sample. Later attempts do not replace this recording.' : 'Enrollment audio was not retained; it cannot be recovered.' }, ...attempts];
+      if (voice.recordingId && voice.recordingId !== enrollmentRecordingId && !attempts.some(attempt => attempt.recordingId === voice.recordingId)) {
+        history.push({ id: 'owner-sample-' + voice.recordingId, recordingId: voice.recordingId,
+          timestamp: voice.lastVerifiedAt || voice.enrolledAt, action: 'Previously retained owner sample', status: 'Owner sample', reason: 'Retained verified sample from before recording history was enabled.' });
+      }
+      history.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      return { ...voice, recordingHistory: history };
+    });
+    res.json({ totalCount: voices.totalCount, items });
+  });
+
+  app.get('/api/client/recordings/:id', requireClientAuth, (req: AuthedRequest, res) => {
+    if (req.currentClientUser!.role !== 'client_admin') { res.status(403).json({ error: 'Only organization admins can play retained recordings.' }); return; }
+    const recording = voiceRecordings.get(req.currentClientUser!.organization_id, String(req.params.id));
+    if (!recording) { res.status(404).json({ error: 'Recording unavailable. Older or non-consented audio was not retained.' }); return; }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type(recording.mimeType).sendFile(recording.file);
+  });
+
+  app.post('/api/client/voices/enroll', requireClientAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+    const client = req.currentClientUser!;
+    if (client.role !== 'client_admin') { res.status(403).json({ error: 'Only a client admin can enroll customers.' }); return; }
+    const { customerName, customerReference, consent, audio, suffix } = req.body ?? {};
+    if (typeof customerName !== 'string' || customerName.trim().length < 2 || customerName.length > 100 ||
+        typeof customerReference !== 'string' || !/^[A-Za-z0-9_-]{2,60}$/.test(customerReference) || consent !== true || typeof audio !== 'string') {
+      res.status(400).json({ error: 'Enter a customer name, a 2–60 character reference (letters, digits, hyphens or underscores), recording, and explicit customer consent.' }); return;
+    }
+    const id = 'client_voice_' + crypto.createHash('sha256').update(client.organization_id + ':' + customerReference.toLowerCase()).digest('hex');
+    if (voicePayments.profiles.has(id)) { res.status(409).json({ error: 'This customer reference is already enrolled.' }); return; }
+    if (analysisBusy) { res.status(429).json({ error: 'Another voice operation is running. Please wait.' }); return; }
+    analysisBusy = true;
+    try {
+      const speakerId = 'client_' + crypto.createHash('sha256').update(id).digest('hex').slice(0, 32);
+      const result = await runPythonAnalysis({ audio, suffix, mode: 'enroll', consent: true, speaker_id: speakerId }, path.resolve(__dirname, '..'));
+      if (result.enrolled !== true || result.speaker_id !== speakerId || typeof result.audio_sha256 !== 'string') {
+        res.status(422).json({ error: result.error || 'Voice enrollment did not complete.' }); return;
+      }
+      voicePayments.register(id, speakerId, result.audio_sha256, { organizationId: client.organization_id, customerName: customerName.trim(), customerReference });
+      res.status(201).json({ item: voicePayments.listOrganizationVoices(client.organization_id).items.find(item => item.id === id) });
+    } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : 'Voice enrollment unavailable.' }); }
+    finally { analysisBusy = false; }
   });
 
   app.post('/api/client/voices/:id/re-enroll', requireClientAuth, (req: AuthedRequest, res) => {
-    try {
-      const updated = clientPortalStore.requestVoiceReenroll(
-        req.currentClientUser!.organization_id,
-        req.currentClientUser!.role,
-        String(req.params.id ?? '')
-      );
-      res.json({ item: updated });
-    } catch (err) {
-      const status = err instanceof ClientPortalError ? err.status : 500;
-      res.status(status).json({ error: err instanceof Error ? err.message : 'Unable to update voice profile.' });
-    }
+    res.status(409).json({ error: 'Live profile replacement is not supported here. No enrollment was changed.' });
   });
 
   app.delete('/api/client/voices/:id', requireClientAuth, (req: AuthedRequest, res) => {
-    try {
-      const result = clientPortalStore.deleteVoice(
-        req.currentClientUser!.organization_id,
-        req.currentClientUser!.role,
-        String(req.params.id ?? '')
-      );
-      res.json(result);
-    } catch (err) {
-      const status = err instanceof ClientPortalError ? err.status : 500;
-      res.status(status).json({ error: err instanceof Error ? err.message : 'Unable to delete voice profile.' });
-    }
+    res.status(409).json({ error: 'Deleting live provider profiles is not supported here. No enrollment was removed.' });
   });
 
   app.get('/api/client/apps', requireClientAuth, (req: AuthedRequest, res) => {

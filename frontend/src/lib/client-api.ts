@@ -10,6 +10,8 @@ import type {
 } from './client-portal-service';
 
 export interface ClientTransactionDTO {
+  recordingId?: string;
+  transcript?: string;
   id: string;
   organization_id: string;
   appId: string;
@@ -152,6 +154,10 @@ export const clientApi = {
 
   getVoices(): Promise<{ totalCount: number; items: PublicClientVoice[] }> {
     return clientRequest('/api/client/voices');
+  },
+
+  enrollVoice(input: { customerName: string; customerReference: string; consent: boolean; audio: string; suffix: string }): Promise<{ item: PublicClientVoice }> {
+    return clientRequest('/api/client/voices/enroll', { method: 'POST', body: JSON.stringify(input) });
   },
 
   requestVoiceReenroll(id: string): Promise<{ item: PublicClientVoice }> {

@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { convertToPaise, DEFAULT_FX_RATES_TO_INR, formatInr } from './inr.ts';
 
 export type ClientRole = 'client_admin' | 'client_viewer';
@@ -68,6 +70,10 @@ export interface StoredClientVoice {
 }
 
 export interface PublicClientVoice {
+  recordingHistory?: VoiceRecordingEntry[];
+  recordingId?: string;
+  customerName?: string;
+  source?: 'live';
   id: string;
   organization_id: string;
   customerRefMasked: string;
@@ -76,7 +82,19 @@ export interface PublicClientVoice {
   status: ClientVoiceStatus;
 }
 
+export interface VoiceRecordingEntry {
+  id: string;
+  recordingId?: string;
+  timestamp: string;
+  action: string;
+  status: 'Enrollment' | 'Owner sample' | ClientTxStatus;
+  reason: string;
+  transcript?: string;
+}
+
 export interface StoredClientTransaction {
+  recordingId?: string;
+  transcript?: string;
   id: string;
   organization_id: string;
   appId: string;
@@ -136,8 +154,30 @@ export class ClientPortalStore {
   // Internal audit records for original non-INR currency conversions; never returned via API.
   private auditRecords = new Map<string, AuditCurrencyRecord>();
 
-  constructor(nowMs = Date.now()) {
+  constructor(nowMs = Date.now(), private storagePath?: string) {
     this.seed(nowMs);
+    if (storagePath) {
+      this.transactions = fs.existsSync(storagePath) ? JSON.parse(fs.readFileSync(storagePath, 'utf8')) : [];
+      if (!Array.isArray(this.transactions)) throw new Error('Client ledger is invalid.');
+    }
+  }
+
+  private persistTransactions() {
+    if (!this.storagePath) return;
+    fs.mkdirSync(path.dirname(this.storagePath), { recursive: true });
+    fs.writeFileSync(this.storagePath + '.tmp', JSON.stringify(this.transactions), { mode: 0o600 });
+    fs.renameSync(this.storagePath + '.tmp', this.storagePath);
+  }
+
+  resolveTransaction(orgId: string, id: string, status: ClientTxStatus, reason: string) {
+    const tx = this.getTransactionById(orgId, id);
+    if (!tx) throw new ClientPortalError('Transaction not found.', 404);
+    const previous = { ...tx };
+    tx.status = status; tx.reason = reason; tx.whatHappenedNext = reason;
+    tx.riskLevel = status === 'Allowed' ? 'Low' : 'High';
+    tx.verificationOutcome = undefined;
+    try { this.persistTransactions(); } catch (error) { Object.assign(tx, previous); throw error; }
+    return tx;
   }
 
   private seed(nowMs: number) {
@@ -418,6 +458,8 @@ export class ClientPortalStore {
    * Ingest a transaction (supports foreign currency conversion on entry to integer INR paise).
    */
   ingestTransaction(input: {
+    recordingId?: string;
+    transcript?: string;
     organization_id: string;
     appId: string;
     customerRef: string;
@@ -443,6 +485,8 @@ export class ClientPortalStore {
     const ts = input.timestamp ?? new Date().toISOString();
 
     const tx: StoredClientTransaction = {
+      recordingId: input.recordingId,
+      transcript: input.transcript,
       id,
       organization_id: input.organization_id,
       appId: app.id,
@@ -459,6 +503,7 @@ export class ClientPortalStore {
     };
 
     this.transactions.unshift(tx);
+    try { this.persistTransactions(); } catch (error) { this.transactions.shift(); throw error; }
 
     if (converted.auditOriginalCurrency !== 'INR') {
       this.auditRecords.set(id, {
@@ -498,7 +543,7 @@ export class ClientPortalStore {
     }
 
     for (const t of scoped) {
-      totalValuePaise += t.amountPaise;
+      if (t.status === 'Allowed') totalValuePaise += t.amountPaise;
       if (t.status === 'Blocked') blockedCount += 1;
       if (t.status === 'Suspicious') suspiciousCount += 1;
 
@@ -579,6 +624,13 @@ export class ClientPortalStore {
       (t) => t.id === txId && t.organization_id === orgId
     );
     return found ?? null;
+  }
+
+  listVoiceAttempts(orgId: string, customerReference: string): VoiceRecordingEntry[] {
+    return this.transactions.filter(tx => tx.organization_id === orgId && tx.customerRef === customerReference)
+      .map(tx => ({ id: tx.id, recordingId: tx.recordingId, timestamp: tx.timestamp,
+        action: tx.action, status: tx.status, reason: tx.reason, transcript: tx.transcript }))
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
   listVoices(orgId: string): { totalCount: number; items: PublicClientVoice[] } {

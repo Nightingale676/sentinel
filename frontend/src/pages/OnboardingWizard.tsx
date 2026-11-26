@@ -1,16 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, Mic, MicOff, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
+import { Check, ShieldCheck } from 'lucide-react';
+import { AudioAnalysisPanel } from '@/src/components/AudioAnalysisPanel';
 import { apiClient, type CustomerUser } from '@/src/lib/api-client';
 import { Button } from '@/src/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { Input } from '@/src/components/ui/input';
 import { StatusBadge } from '@/src/components/ui/StatusBadge';
-
-const PHRASES = [
-  'My voice protects my everyday banking.',
-  'Confirm only requests coming from me.',
-  'Pause unusual transfers until I approve.',
-];
 
 interface OnboardingWizardProps {
   user: CustomerUser;
@@ -27,84 +22,12 @@ export function OnboardingWizard({
 }: OnboardingWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [consentAccepted, setConsentAccepted] = useState(false);
-  const [recordedCount, setRecordedCount] = useState(user.voiceEnrolledCount);
-  const [isRecording, setIsRecording] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [activePhrase, setActivePhrase] = useState<number | null>(null);
-  const [savingSample, setSavingSample] = useState(false);
-  const [micDenied, setMicDenied] = useState(false);
-  const [audioLevel, setAudioLevel] = useState(14);
+  const [voiceEnrolled, setVoiceEnrolled] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [phoneCode, setPhoneCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const levelTimerRef = useRef<number | null>(null);
-  const captureIdRef = useRef(0);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (levelTimerRef.current) window.clearInterval(levelTimerRef.current);
-      captureIdRef.current += 1;
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
-  const recordPhrase = async (phraseIdx: number) => {
-    setError(null);
-    setIsRecording(true);
-    setActivePhrase(phraseIdx);
-    setElapsedSeconds(0);
-    const captureId = ++captureIdRef.current;
-
-    try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        if (captureId !== captureIdRef.current) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        streamRef.current = stream;
-      }
-    } catch {
-      setMicDenied(true);
-    }
-    if (captureId !== captureIdRef.current) return;
-
-    let ticks = 0;
-    const startedAt = Date.now();
-    if (levelTimerRef.current) window.clearInterval(levelTimerRef.current);
-    levelTimerRef.current = window.setInterval(() => {
-      ticks += 1;
-      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-      setAudioLevel(35 + Math.round(Math.abs(Math.sin(ticks * 0.8)) * 55));
-    }, 100);
-
-  };
-
-  const stopRecording = async () => {
-      if (activePhrase === null || !isRecording) return;
-      const phraseIdx = activePhrase;
-      captureIdRef.current += 1;
-      if (levelTimerRef.current) window.clearInterval(levelTimerRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      setIsRecording(false);
-      setActivePhrase(null);
-      setAudioLevel(14);
-      setSavingSample(true);
-
-      try {
-        const res = await apiClient.submitVoiceSample(phraseIdx);
-        setRecordedCount(res.voiceEnrolledCount);
-        onToast(`Phrase ${phraseIdx + 1} captured`, 'success');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unable to save voice sample.');
-      } finally {
-        setSavingSample(false);
-      }
-  };
-
   const handleFinish = async () => {
     setError(null);
     setSubmitting(true);
@@ -151,15 +74,15 @@ export function OnboardingWizard({
         <CardHeader className="border-b border-[var(--ink)]">
           <CardTitle className="text-3xl font-bold">
             {step === 1 && 'Voice protection consent'}
-            {step === 2 && 'Three-phrase enrollment'}
+            {step === 2 && 'Enroll your owner voice'}
             {step === 3 && 'Personal passphrase'}
             {step === 4 && 'Mobile number check'}
             {step === 5 && 'Review and activate'}
           </CardTitle>
           <CardDescription className="font-serif-italic text-lg">
-            {step === 1 && 'Sentinel uses an encrypted vocal signature strictly to protect your account.'}
-            {step === 2 && 'Read the phrase and continue speaking naturally. Press Stop when finished. This is demo enrollment; live voice verification is not connected yet.'}
-            {step === 3 && 'Used when an unusual or large request triggers step-up verification.'}
+            {step === 1 && 'Review how your voice profile is used before enrolling.'}
+            {step === 2 && 'Record 25–30 seconds of your own voice and submit it once. Later sign-ins verify against this same profile.'}
+            {step === 3 && 'Set your demo account passphrase. It cannot replace voice verification or authorize a payment.'}
             {step === 4 && `Confirm ${user.phone} as your trusted recovery contact.`}
             {step === 5 && 'Inspect your configuration below before activating protection.'}
           </CardDescription>
@@ -178,7 +101,7 @@ export function OnboardingWizard({
           {step === 1 && (
             <div className="space-y-4">
               <div className="border border-[var(--ink)] bg-[var(--bg-paper)] p-4 text-base leading-relaxed text-[var(--ink)]">
-                Your voice signature remains private and is never shared with advertisers or third parties. You may pause or delete your vocal profile at any time from Account settings.
+                Enrollment sends your recording to DetectifAI to create a voice profile for future verification. Live checks use provider credits. With your registry consent, Aarohan Bank India can see your account name, customer reference, and enrollment and verification dates. Separate recording-retention consent lets organization admins play recordings during security review, including blocked attempts. Voice replacement and provider-profile deletion are not supported in this interface.
               </div>
               <label className="flex items-start gap-3 cursor-pointer">
                 <input
@@ -210,79 +133,10 @@ export function OnboardingWizard({
 
           {step === 2 && (
             <div className="space-y-4">
-              {micDenied && (
-                <div className="flex items-center gap-2 border border-[var(--ink)] bg-[var(--bg-paper)] px-4 py-3 text-base text-[var(--ink)]">
-                  <MicOff className="h-4 w-4 shrink-0 text-[var(--accent-red)]" />
-                  <span>Microphone access unavailable. Tap each phrase button to complete a guided capture.</span>
-                </div>
-              )}
-
-              <div className="border border-[var(--ink)] bg-[var(--bg-paper)] p-4">
-                <div className="flex items-center justify-between font-mono text-base text-[var(--ink-muted)]">
-                  <span role="status">{isRecording ? `Listening: ${elapsedSeconds} seconds elapsed` : 'Press Record phrase to begin'}</span>
-                  <span className="tabular-nums">{recordedCount} / 3 phrases saved</span>
-                </div>
-                <div className="mt-3 h-3 w-full overflow-hidden border border-[var(--ink)] bg-[var(--bg-paper)]">
-                  <div
-                    className="h-full bg-[var(--ink)] transition-all duration-100"
-                    style={{ width: `${audioLevel}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {PHRASES.map((phrase, idx) => {
-                  const done = recordedCount > idx;
-                  return (
-                    <div
-                      key={phrase}
-                      className="flex flex-col gap-3 border border-[var(--ink)] p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div>
-                        <p className="font-mono text-base text-[var(--ink-muted)]">Phrase 0{idx + 1}</p>
-                        <p className="mt-0.5 font-serif-italic text-xl text-[var(--ink)]">
-                          “{phrase}”
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={done ? 'outline' : 'primary'}
-                        disabled={savingSample || (isRecording && activePhrase !== idx)}
-                        onClick={() => activePhrase === idx ? stopRecording() : recordPhrase(idx)}
-                      >
-                        {activePhrase === idx ? 'Stop' : done ? (
-                          <>
-                            <Check className="h-4 w-4" />
-                            Recorded
-                          </>
-                        ) : (
-                          <>
-                            <Mic className="h-4 w-4" />
-                            {isRecording ? 'Capturing...' : 'Record phrase'}
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-
+              <AudioAnalysisPanel onOwnerEnrolled={() => setVoiceEnrolled(true)} />
               <div className="flex items-center justify-between pt-2">
-                <Button variant="outline" disabled={isRecording || savingSample} onClick={() => setStep(1)}>
-                  Back
-                </Button>
-                <Button disabled={isRecording || savingSample}
-                  onClick={() => {
-                    if (recordedCount < 3) {
-                      setError('Please record all 3 short phrases to continue.');
-                      return;
-                    }
-                    setError(null);
-                    setStep(3);
-                  }}
-                >
-                  Continue
-                </Button>
+                <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+                <Button disabled={!voiceEnrolled} onClick={() => { setError(null); setStep(3); }}>Continue</Button>
               </div>
             </div>
           )}
@@ -382,7 +236,7 @@ export function OnboardingWizard({
               <div className="divide-y divide-[var(--ink)] border border-[var(--ink)] bg-[var(--bg-paper)]">
                 <div className="flex items-center justify-between px-4 py-3 text-base">
                   <span className="text-[var(--ink-muted)]">Voice profile</span>
-                  <StatusBadge kind="allow" label={`${recordedCount} of 3 ready`} />
+                  <StatusBadge kind={voiceEnrolled ? 'allow' : 'step_up'} label={voiceEnrolled ? 'Owner voice enrolled' : 'Enrollment required'} />
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 text-base">
                   <span className="text-[var(--ink-muted)]">Personal passphrase</span>

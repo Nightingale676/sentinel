@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-type Profile = { speakerId: string; enrollmentHash: string; consentAt: number };
+type EnrollmentDetails = { organizationId: string; customerName: string; customerReference: string };
+type Profile = { speakerId: string; enrollmentHash: string; consentAt: number; enrollment?: EnrollmentDetails; lastVerifiedAt?: number; recordingId?: string };
 type Authorization = { userId: string; speakerId: string; amountCents: number; payeeId: string; payeeName: string; expires: number };
 type Payee = { id: string; name: string };
 type PaymentDecision = { eligible: boolean; message: string; authorizationToken?: string; amountCents?: number; payeeName?: string };
@@ -32,11 +33,55 @@ export class VoicePayments {
     fs.renameSync(temporary, this.storagePath);
   }
 
-  register(userId: string, speakerId: string, hash: string) {
+  register(userId: string, speakerId: string, hash: string, enrollment?: EnrollmentDetails, recordingId?: string) {
     if (this.profiles.has(userId)) throw new Error('A voice owner is already enrolled. Replacing an owner is disabled.');
-    this.profiles.set(userId, { speakerId, enrollmentHash: hash, consentAt: Date.now() });
+    this.profiles.set(userId, { speakerId, enrollmentHash: hash, consentAt: Date.now(), ...(enrollment ? { enrollment } : {}), ...(recordingId ? { recordingId } : {}) });
     try { this.persist(); }
     catch (error) { this.profiles.delete(userId); throw error; }
+  }
+
+  listOrganizationVoices(organizationId: string) {
+    const items = [...this.profiles.entries()]
+      .filter(([, profile]) => profile.enrollment?.organizationId === organizationId)
+      .map(([id, profile]) => ({ id, organization_id: organizationId,
+        customerName: profile.enrollment!.customerName, recordingId: profile.recordingId,
+        customerRefMasked: profile.enrollment!.customerReference,
+        enrolledAt: new Date(profile.consentAt).toISOString(), lastVerifiedAt: profile.lastVerifiedAt ? new Date(profile.lastVerifiedAt).toISOString() : '',
+        status: 'Active' as const, source: 'live' as const }));
+    return { totalCount: items.length, items };
+  }
+
+  linkOrganization(userId: string, enrollment: EnrollmentDetails) {
+    const profile = this.profiles.get(userId);
+    if (!profile) throw new Error('Enroll your voice first.');
+    if (profile.enrollment && profile.enrollment.organizationId !== enrollment.organizationId) throw new Error('This profile already belongs to another organization.');
+    const previous = profile.enrollment;
+    profile.enrollment = enrollment;
+    try { this.persist(); } catch (error) { profile.enrollment = previous; throw error; }
+  }
+
+  recordVerifiedAudio(userId: string, recordingId?: string) {
+    const profile = this.profiles.get(userId);
+    if (!profile) throw new Error('Voice profile not found.');
+    const previous = { lastVerifiedAt: profile.lastVerifiedAt, recordingId: profile.recordingId };
+    profile.lastVerifiedAt = Date.now();
+    if (recordingId) profile.recordingId = recordingId;
+    try { this.persist(); } catch (error) { Object.assign(profile, previous); throw error; }
+  }
+
+  verifyLogin(userId: string, analysis: any) {
+    const profile = this.profiles.get(userId);
+    if (!profile || analysis.speaker_id !== profile.speakerId || analysis.payment_checks_live !== true ||
+        analysis.report?.speaker_status !== 'match' || analysis.report?.authenticity_status !== 'genuine' ||
+        analysis.voice_checks?.deepfake_complete !== true || analysis.voice_checks?.decision !== 'match')
+      throw new Error('Voice sign-in failed. A genuine recording matching the enrolled owner is required.');
+    const hash = analysis.audio_sha256;
+    if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash) || this.isReplay(userId, hash))
+      throw new Error('Record a fresh voice sample. Enrollment audio and previously verified recordings cannot be reused.');
+    const previous = profile.lastVerifiedAt;
+    this.usedAudio.add(userId + ':' + hash);
+    profile.lastVerifiedAt = Date.now();
+    try { this.persist(); } catch (error) { profile.lastVerifiedAt = previous; this.usedAudio.delete(userId + ':' + hash); throw error; }
   }
 
   isReplay(userId: string, hash: string) {
