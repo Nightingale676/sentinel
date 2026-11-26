@@ -6,6 +6,18 @@ import path from 'node:path';
 
 const hash = 'b'.repeat(64);
 const payees = [{ id: 'maya', name: 'Maya Chen' }];
+it('lists only real organization-linked enrollments without exposing biometric metadata', () => {
+  const service = new VoicePayments();
+  expect(service.listOrganizationVoices('bank').totalCount).toBe(0);
+  service.register('personal', 'personal-speaker', 'a'.repeat(64));
+  service.register('customer', 'bank-speaker', 'b'.repeat(64), { organizationId: 'bank', customerName: 'Asha Rao', customerReference: 'CUST-001' });
+  service.register('other', 'other-speaker', 'c'.repeat(64), { organizationId: 'other-bank', customerName: 'Other Customer', customerReference: 'CUST-002' });
+  const result = service.listOrganizationVoices('bank');
+  expect(result.totalCount).toBe(1);
+  expect(result.items[0]).toMatchObject({ customerName: 'Asha Rao', customerRefMasked: 'CUST-001', source: 'live', lastVerifiedAt: '' });
+  expect(JSON.stringify(result)).not.toContain('bank-speaker');
+  expect(JSON.stringify(result)).not.toContain('enrollmentHash');
+});
 function setup() {
   const service = new VoicePayments();
   service.register('owner', 'voice-owner', 'a'.repeat(64));
@@ -16,6 +28,38 @@ function setup() {
     voice_checks: { decision: 'match', deepfake_complete: true } };
   return { service, analysis };
 }
+
+it('verifies a later login without replacing enrollment or issuing payment authorization', () => {
+  const { service, analysis } = setup();
+  service.linkOrganization('owner', { organizationId: 'bank', customerName: 'Asha Rao', customerReference: 'CUST-001' });
+  const original = { ...service.profiles.get('owner')! };
+  analysis.transcript = 'This is my fresh sign in recording';
+  analysis.report.intent.amounts = [];
+  service.verifyLogin('owner', analysis);
+  expect(service.profiles.get('owner')).toMatchObject({ speakerId: original.speakerId, enrollmentHash: original.enrollmentHash, consentAt: original.consentAt });
+  expect(service.listOrganizationVoices('bank').items[0].lastVerifiedAt).not.toBe('');
+  expect(() => service.consume('owner', 'not-a-payment-token')).toThrow();
+  expect(() => service.verifyLogin('owner', analysis)).toThrow('fresh');
+});
+
+it('rejects mismatched, synthetic, cached, and enrollment audio at voice sign-in', () => {
+  const { service, analysis } = setup();
+  expect(() => service.verifyLogin('owner', { ...analysis, speaker_id: 'other' })).toThrow();
+  expect(() => service.verifyLogin('owner', { ...analysis, report: { ...analysis.report, authenticity_status: 'synthetic' } })).toThrow();
+  expect(() => service.verifyLogin('owner', { ...analysis, payment_checks_live: false })).toThrow();
+  expect(() => service.verifyLogin('owner', { ...analysis, audio_sha256: 'a'.repeat(64) })).toThrow();
+  expect(service.isReplay('owner', analysis.audio_sha256)).toBe(false);
+});
+
+it('requires an enrolled profile and refuses to move a profile across organizations', () => {
+  const service = new VoicePayments();
+  const details = { organizationId: 'bank', customerName: 'Asha Rao', customerReference: 'CUST-001' };
+  expect(() => service.linkOrganization('owner', details)).toThrow('Enroll');
+  service.register('owner', 'speaker', 'a'.repeat(64));
+  expect(service.listOrganizationVoices('bank').totalCount).toBe(0);
+  service.linkOrganization('owner', details);
+  expect(() => service.linkOrganization('owner', { ...details, organizationId: 'other-bank' })).toThrow('another organization');
+});
 
 it('requires enrollment and consent-backed registration before any authorization', () => {
   const { analysis } = setup();
@@ -104,11 +148,15 @@ it('persists the owner and replay protection across restarts without restoring p
   const file = path.join(directory, 'state.json');
   try {
     const service = new VoicePayments(file);
-    service.register('owner', 'voice-owner', 'a'.repeat(64));
+    service.register('owner', 'voice-owner', 'a'.repeat(64), { organizationId: 'bank', customerName: 'Asha Rao', customerReference: 'CUST-001' });
+    service.recordVerifiedAudio('owner', 'retained-recording-id');
     const { analysis } = setup();
     const result = service.authorize('owner', analysis, payees);
     const restored = new VoicePayments(file);
     expect(restored.profiles.get('owner')?.speakerId).toBe('voice-owner');
+    expect(restored.listOrganizationVoices('bank').items[0].customerName).toBe('Asha Rao');
+    expect(restored.listOrganizationVoices('bank').items[0].recordingId).toBe('retained-recording-id');
+    expect(restored.listOrganizationVoices('other-bank').totalCount).toBe(0);
     expect(restored.isReplay('owner', hash)).toBe(true);
     expect(() => restored.consume('owner', result.authorizationToken!)).toThrow();
   } finally { if (fs.existsSync(file)) fs.unlinkSync(file); fs.rmdirSync(directory); }

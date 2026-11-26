@@ -4,9 +4,37 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AudioAnalysisPanel } from '../components/AudioAnalysisPanel';
 import { apiClient } from '../lib/api-client';
 
-vi.mock('../lib/api-client', () => ({ apiClient: { analyze: vi.fn(), voiceProfile: vi.fn(), enrollOwner: vi.fn(), checkPayment: vi.fn(), confirmVoiceTransfer: vi.fn() } }));
+vi.mock('../lib/api-client', () => ({ apiClient: { analyze: vi.fn(), voiceProfile: vi.fn(), enrollOwner: vi.fn(), checkPayment: vi.fn(), confirmVoiceTransfer: vi.fn(), verifyVoiceLogin: vi.fn(), linkVoiceRegistry: vi.fn() } }));
 beforeEach(() => { vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: false }); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+
+it('uses the existing profile for voice sign-in without enrolling again or checking a payment', async () => {
+  vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => 'blob:login'), revokeObjectURL: vi.fn() }));
+  vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: true });
+  const user = { id: 'owner', voiceVerificationRequired: false } as any;
+  vi.mocked(apiClient.verifyVoiceLogin).mockResolvedValue({ verified: true, user });
+  const verified = vi.fn();
+  render(<AudioAnalysisPanel onLoginVerified={verified} />);
+  await screen.findByText('Verified: owner voice registered.');
+  expect(screen.queryByText('Choose a task')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Upload recording for analysis'), { target: { files: [new File(['login'], 'login.wav', { type: 'audio/wav' })] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Verify sign-in' }));
+  await waitFor(() => expect(verified).toHaveBeenCalledWith(user));
+  expect(apiClient.enrollOwner).not.toHaveBeenCalled();
+  expect(apiClient.checkPayment).not.toHaveBeenCalled();
+});
+
+it('links an existing enrollment to the registry only after explicit consent', async () => {
+  vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: true, registryLinked: false, organizationName: 'Aarohan Bank India' });
+  vi.mocked(apiClient.linkVoiceRegistry).mockResolvedValue({ linked: true });
+  render(<AudioAnalysisPanel />);
+  const button = await screen.findByRole('button', { name: 'Show my enrolled voice in registry' });
+  expect(button).toBeDisabled();
+  expect(apiClient.linkVoiceRegistry).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByLabelText(/I consent to showing my enrolled voice profile/));
+  fireEvent.click(button);
+  expect(await screen.findByText("Your enrolled profile appears in Aarohan Bank India's Voices registry.")).toBeInTheDocument();
+});
 
 it('takes a selected saved payee through verification and explicit transfer confirmation', async () => {
   vi.stubGlobal('URL', Object.assign(class extends URL {}, {
