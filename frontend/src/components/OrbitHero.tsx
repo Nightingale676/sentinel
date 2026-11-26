@@ -224,9 +224,6 @@ export function OrbitHero({ onLearnMoreSection, onBecomeActive }: OrbitHeroProps
       <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:px-8">
         <div className="flex w-full flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
           <div>
-            <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-signal-red)]">
-              02 Architecture
-            </p>
             <h2 className="mt-2 font-display text-4xl font-black uppercase text-[var(--color-paper)] sm:text-6xl">
               Spoken verification loop
             </h2>
@@ -447,9 +444,6 @@ export function OrbitHero({ onLearnMoreSection, onBecomeActive }: OrbitHeroProps
             )}
           </AnimatePresence>
 
-          <p className="mt-4 font-mono text-base text-[var(--color-paper)]/80">
-            Fig. 2 — Orbital model showing 120° coupling across wearable telemetry, mobile interface, and waveform screening. Drag horizontally or select any node to inspect.
-          </p>
         </div>
       </div>
     </ScrollZoomSection>

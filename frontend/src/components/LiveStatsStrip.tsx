@@ -56,9 +56,6 @@ export function LiveStatsStrip({ onBecomeActive }: LiveStatsStripProps) {
         <div className="border border-[var(--color-paper)]/30 bg-[var(--color-ink)] p-6 sm:p-8">
           <div className="flex flex-col gap-2 border-b border-[var(--color-paper)]/25 pb-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-signal-red)]">
-                01 Benchmarks · Problem Scale
-              </p>
               <h2 className="mt-1 font-display text-4xl font-black uppercase text-[var(--color-paper)] sm:text-5xl">
                 Verification Metrics
               </h2>
@@ -97,9 +94,6 @@ export function LiveStatsStrip({ onBecomeActive }: LiveStatsStripProps) {
             </div>
           </div>
 
-          <p className="mt-6 border-t border-[var(--color-paper)]/20 pt-3 font-mono text-base text-[var(--color-paper)]/75">
-            Fig. 1 — Illustrative customer benchmark figures. Source: Sentinel demo environment simulation; figures are demonstration values, not audited external study claims.
-          </p>
         </div>
       </div>
     </ScrollZoomSection>

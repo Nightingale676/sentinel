@@ -58,9 +58,6 @@ export function TryItSimulator({ onBecomeActive }: TryItSimulatorProps) {
       <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:px-8">
         <div className="border border-[var(--color-paper)]/30 bg-[var(--color-ink)] p-6 sm:p-10">
           <div className="border-b border-[var(--color-paper)]/25 pb-5">
-            <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-signal-red)]">
-              05 Simulation · Decision Matrix
-            </p>
             <h2 className="mt-2 font-display text-4xl font-black uppercase text-[var(--color-paper)] sm:text-6xl">
               Firewall Response Test
             </h2>
@@ -180,9 +177,6 @@ export function TryItSimulator({ onBecomeActive }: TryItSimulatorProps) {
             </motion.div>
           </AnimatePresence>
 
-          <p className="mt-5 font-mono text-base text-[var(--color-paper)]/75">
-            Fig. 5 — Interactive simulation illustrating rule outcomes. Note: Layer bars show representative demo thresholds.
-          </p>
         </div>
       </div>
     </ScrollZoomSection>

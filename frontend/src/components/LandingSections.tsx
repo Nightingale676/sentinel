@@ -106,9 +106,6 @@ export function LandingSections({
       >
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
           <div className="mb-6 max-w-3xl">
-            <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-blush)]">
-              03 Coverage · Scope
-            </p>
             <h2 className="mt-2 font-display text-4xl font-black uppercase text-[var(--color-paper)] sm:text-6xl">
               Protected Surfaces
             </h2>
@@ -129,9 +126,6 @@ export function LandingSections({
             itemHeight={190}
           />
 
-          <p className="mt-4 font-mono text-base text-[var(--color-paper)]/85">
-            Fig. 3 — Policy classification across twelve banking and wearable action categories.
-          </p>
         </div>
       </ScrollZoomSection>
 
@@ -145,9 +139,6 @@ export function LandingSections({
       >
         <div ref={stepsSectionRef} className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
           <div className="mb-8 max-w-3xl">
-            <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-indigo)]">
-              04 Methodology · Protocol
-            </p>
             <h2 className="mt-2 font-display text-4xl font-black uppercase text-[var(--color-ink)] sm:text-6xl">
               Three-Stage Firewall
             </h2>
@@ -230,9 +221,6 @@ export function LandingSections({
             })}
           </div>
 
-          <p className="mt-5 font-mono text-base text-[var(--color-ink)]/80">
-            Fig. 4 — Enrollment, routine verification, and adaptive step-up sequence.
-          </p>
         </div>
       </ScrollZoomSection>
 
@@ -249,9 +237,6 @@ export function LandingSections({
       >
         <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6 lg:px-8">
           <div className="mb-8">
-            <p className="font-mono text-base font-semibold uppercase tracking-wider text-[var(--color-indigo)]">
-              06 Documentation · FAQ
-            </p>
             <h2 className="mt-2 font-display text-4xl font-black uppercase text-[var(--color-ink)] sm:text-6xl">
               Frequently Asked Notes
             </h2>
@@ -265,10 +250,6 @@ export function LandingSections({
           </div>
 
           <BouncyAccordion items={FAQ_ITEMS} />
-
-          <p className="mt-4 font-mono text-base text-[var(--color-ink)]/85">
-            Fig. 6 — Operational notes on vocal privacy and fallback recovery controls.
-          </p>
 
           {/* Conversion band */}
           <div className="mt-12 flex flex-col items-start justify-between gap-4 border border-[var(--color-ink)] bg-[var(--color-paper)] p-6 text-[var(--color-ink)] sm:flex-row sm:items-center sm:p-8">
@@ -307,8 +288,6 @@ export function LandingSections({
               Sentinel
             </span>
             <span>Adaptive AI Voice Firewall</span>
-            <span aria-hidden="true">·</span>
-            <span>Interaction patterns inspired by Skiper UI</span>
           </div>
 
           <div className="flex items-center gap-4">
