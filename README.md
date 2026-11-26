@@ -25,9 +25,17 @@ Open http://localhost:3000. See [the setup guide](frontend/LOCAL_SETUP.md) for e
 
 ## 💸 Payment flow
 
+Customers enroll their owner voice once during account setup. With explicit registry consent, their name and automatic customer reference appear in Aarohan Bank India's Voices tab. Later password sign-ins require a fresh matching, genuine voice recording before customer APIs are accessible; successful verification updates the registry's last-verified date. Existing enrolled owners can opt into the registry from their dashboard without uploading enrollment audio again. Live checks use DetectifAI credits. This demo links customer registry consent to the configured Aarohan organization; production requires verified bank membership. Customer accounts remain in memory even though voice profile metadata persists across server restarts.
+
 Add a payee and enroll the owner's voice with consent. Select Pay, record a fresh request containing one amount in rupees and the full saved payee name, then Stop and Run. Review the verified amount and recipient before confirming.
 
 The backend issues account-bound, single-use authorization tokens that expire after two minutes. Typed requests cannot authorize a debit. Enrollment audio and previously authorized recording hashes cannot be reused.
+
+## 🎧 Security recordings and live audit ledger
+
+The client portal uses persisted real audit events in `private_runtime/client-ledger.json`, rather than seeded transaction examples. Pending voice payments appear as Suspicious until confirmation; completed transfers update that row to Allowed. Rejected and inconclusive payment/sign-in checks are recorded with their reasons. Only allowed transfer amounts contribute to the value total. The portal refreshes every 15 seconds and on window focus.
+
+Recording retention requires separate, unchecked-by-default consent for each submission. Consented audio is saved under `private_runtime/recordings/` and served only through an organization-scoped client-admin endpoint. Admins can play a retained owner sample from Voices and submitted attempt recordings from transaction details, including blocked attempts. A rejected sample does not establish who spoke. Audio without retention consent, including older recordings, cannot be recovered. Retained audio has no automatic expiry; the operator must remove it when no longer needed. These private files are excluded from Git.
 
 ## 🧪 Validation
 
