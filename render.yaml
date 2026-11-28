@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sentinel-voice-firewall
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/analysis/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DETECTIF_API_KEY
+        value: ""

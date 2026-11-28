@@ -2,6 +2,12 @@
 
 🎙️ Voice-secured demo payments using React, TypeScript, Node.js, Python, and DetectifAI. Faster Whisper transcribes audio locally; Eidos verifies speakers and Aletheia checks speech authenticity.
 
+## 🌍 Deploy a demo
+
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Nightingale676/sentinel)
+
+The Blueprint uses the free demo plan and leaves the provider key unset. See [deployment instructions](DEPLOYMENT.md) for configuration, ephemeral storage limitations, and compute requirements for live transcription. Deployment does not upload your local recordings or API keys.
+
 ## 🚀 Run locally
 
 Install Python 3.10+ and Node.js compatible with Vite 8. In PowerShell from this folder:
