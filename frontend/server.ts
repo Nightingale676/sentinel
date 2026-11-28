@@ -7,6 +7,7 @@ import { runPythonAnalysis } from './src/lib/python-analysis.ts';
 import { VoicePayments } from './src/lib/voice-payments.ts';
 import { VoiceRecordings } from './src/lib/voice-recordings.ts';
 import { classifyRejectedVoice } from './src/lib/voice-audit.ts';
+import { API_KEY_NOT_SET, voiceApiConfigured } from './src/lib/voice-api-config.ts';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { evaluateVoiceCommand, type FirewallDecision } from './src/lib/sentinel-logic.ts';
@@ -17,9 +18,10 @@ import {
   type SanitizedClientUser,
 } from './src/lib/client-portal-service.ts';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const PORT = Number(process.env.PORT ?? 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -426,8 +428,12 @@ async function startServer() {
 
   // Local prototype: all audio checks refer to the one explicitly enrolled customer.
   app.get('/api/analysis/health', (_req, res) => {
-    res.json({ status: 'ready', service: 'sentinel-python-bridge', referenceSpeaker: 'customer_001' });
+    res.json({ status: 'ready', service: 'sentinel-python-bridge', referenceSpeaker: 'customer_001', apiKeyConfigured: voiceApiConfigured(), message: voiceApiConfigured() ? undefined : API_KEY_NOT_SET });
   });
+  function requireVoiceApi(_req: Request, res: Response, next: NextFunction) {
+    if (!voiceApiConfigured()) { res.status(503).json({ error: API_KEY_NOT_SET }); return; }
+    next();
+  }
   let analysisBusy = false;
   const voicePayments = new VoicePayments(path.resolve(__dirname, '..', 'private_runtime', 'voice-payments.json'));
   const voiceRecordings = new VoiceRecordings(path.resolve(__dirname, '..', 'private_runtime', 'recordings'));
@@ -465,7 +471,7 @@ async function startServer() {
     voiceVerificationRequired: voicePayments.profiles.has(user.id) && !verified });
   app.get('/api/voice/profile', requireAuth, (req: AuthedRequest, res) => {
     const profile = voicePayments.profiles.get(req.currentUser!.id);
-    res.json({ enrolled: !!profile, registryLinked: !!profile?.enrollment, organizationName: registryOrganization.name });
+    res.json({ enrolled: !!profile, registryLinked: !!profile?.enrollment, organizationName: registryOrganization.name, apiKeyConfigured: voiceApiConfigured() });
   });
   app.post('/api/voice/registry-consent', requireAuth, (req: AuthedRequest, res) => {
     if (req.body?.consent !== true) { res.status(400).json({ error: 'Explicit registry consent is required.' }); return; }
@@ -474,7 +480,7 @@ async function startServer() {
       res.json({ linked: true });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Could not link the profile.' }); }
   });
-  app.post('/api/voice/login-check', requireAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+  app.post('/api/voice/login-check', requireAuth, requireVoiceApi, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
     const user = req.currentUser!;
     const profile = voicePayments.profiles.get(user.id);
     if (!profile || typeof req.body?.audio !== 'string') { res.status(400).json({ error: 'An enrolled account and fresh recording are required.' }); return; }
@@ -501,7 +507,7 @@ async function startServer() {
     }
     finally { analysisBusy = false; }
   });
-  app.post('/api/voice/enroll', requireAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+  app.post('/api/voice/enroll', requireAuth, requireVoiceApi, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
     const user = req.currentUser!;
     if (req.body?.consent !== true) { res.status(400).json({ error: 'Voice enrollment requires your explicit consent.' }); return; }
     if (voicePayments.profiles.has(user.id)) { res.status(409).json({ error: 'An owner is already enrolled. Voice replacement is disabled.' }); return; }
@@ -522,7 +528,7 @@ async function startServer() {
     } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : 'Enrollment unavailable.' }); }
     finally { analysisBusy = false; }
   });
-  app.post('/api/voice/payment-check', requireAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+  app.post('/api/voice/payment-check', requireAuth, requireVoiceApi, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
     const user = req.currentUser!;
     const profile = voicePayments.profiles.get(user.id);
     if (!profile) { res.status(403).json({ error: 'Payment blocked: enroll the owner voice with consent first.' }); return; }
@@ -581,6 +587,7 @@ async function startServer() {
     }
   });
   app.post('/api/analysis', requireAuth, express.json({ limit: '17mb' }), async (req, res) => {
+    if (req.body?.live === true && !voiceApiConfigured()) { res.status(503).json({ error: API_KEY_NOT_SET }); return; }
     if (analysisBusy) { res.status(429).json({ error: 'Another recording is being analyzed. Please wait.' }); return; }
     const payload = req.body;
     if (!payload || (typeof payload.text !== 'string' && typeof payload.audio !== 'string')) {
@@ -986,7 +993,7 @@ async function startServer() {
     res.type(recording.mimeType).sendFile(recording.file);
   });
 
-  app.post('/api/client/voices/enroll', requireClientAuth, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
+  app.post('/api/client/voices/enroll', requireClientAuth, requireVoiceApi, express.json({ limit: '17mb' }), async (req: AuthedRequest, res) => {
     const client = req.currentClientUser!;
     if (client.role !== 'client_admin') { res.status(403).json({ error: 'Only a client admin can enroll customers.' }); return; }
     const { customerName, customerReference, consent, audio, suffix } = req.body ?? {};

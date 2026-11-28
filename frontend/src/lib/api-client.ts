@@ -168,7 +168,7 @@ async function request<T>(
 }
 
 export const apiClient = {
-  voiceProfile(): Promise<{ enrolled: boolean; registryLinked?: boolean; organizationName?: string }> { return request('/api/voice/profile'); },
+  voiceProfile(): Promise<{ enrolled: boolean; registryLinked?: boolean; organizationName?: string; apiKeyConfigured?: boolean }> { return request('/api/voice/profile'); },
   verifyVoiceLogin(payload: { audio: string; suffix: string; recordingConsent?: boolean }): Promise<{ verified: boolean; user: CustomerUser }> {
     return request('/api/voice/login-check', { method: 'POST', body: JSON.stringify(payload) });
   },

@@ -8,6 +8,16 @@ vi.mock('../lib/api-client', () => ({ apiClient: { analyze: vi.fn(), voiceProfil
 beforeEach(() => { vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: false }); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
+it('explains a missing API key before live enrollment and leaves text analysis available', async () => {
+  vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: false, apiKeyConfigured: false });
+  render(<AudioAnalysisPanel />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('API key not set');
+  expect(apiClient.enrollOwner).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByLabelText('Risk analysis only'));
+  fireEvent.change(screen.getByLabelText('Request text to assess'), { target: { value: 'Hello' } });
+  expect(screen.getByRole('button', { name: 'Assess text only' })).toBeEnabled();
+});
+
 it('uses the existing profile for voice sign-in without enrolling again or checking a payment', async () => {
   vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => 'blob:login'), revokeObjectURL: vi.fn() }));
   vi.mocked(apiClient.voiceProfile).mockResolvedValue({ enrolled: true });

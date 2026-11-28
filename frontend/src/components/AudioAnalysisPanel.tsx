@@ -5,6 +5,7 @@ import { Button } from '@/src/components/ui/button';
 export function AudioAnalysisPanel({ onPaymentCompleted, payees = [], requestedPayee, onLoginVerified, onOwnerEnrolled }: { onPaymentCompleted?: () => void; payees?: { id: string; name: string }[]; requestedPayee?: { id: string; name: string } | null; onLoginVerified?: (user: CustomerUser) => void; onOwnerEnrolled?: () => void }) {
   const [purpose, setPurpose] = useState<'enroll' | 'payment' | 'analysis'>('enroll');
   const [enrolled, setEnrolled] = useState(false);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null);
   const [consent, setConsent] = useState(false);
   const [registryConsent, setRegistryConsent] = useState(false);
   const [recordingConsent, setRecordingConsent] = useState(false);
@@ -38,6 +39,7 @@ export function AudioAnalysisPanel({ onPaymentCompleted, payees = [], requestedP
   useEffect(() => {
     apiClient.voiceProfile().then(profile => { if (mounted.current) {
       setEnrolled(profile.enrolled);
+      setApiKeyConfigured(profile.apiKeyConfigured ?? null);
       setRegistryLinked(profile.registryLinked === true);
       setOrganizationName(profile.organizationName || '');
       if (profile.enrolled) { setPurpose(onOwnerEnrolled ? 'enroll' : 'payment'); onOwnerEnrolled?.(); }
@@ -149,6 +151,7 @@ export function AudioAnalysisPanel({ onPaymentCompleted, payees = [], requestedP
 
   return <section aria-label="Real recording analysis" className="space-y-4 border border-[var(--ink)] bg-[var(--bg-paper)] p-5 text-[var(--ink)]">
     <h2 className="font-display text-3xl">{onLoginVerified ? 'Verify your voice to finish signing in' : 'Owner voice payment protection'}</h2>
+    {apiKeyConfigured === false && <p role="alert">API key not set. Live enrollment, voice sign-in, payment verification, and live analysis are unavailable. Ask the server administrator to configure the backend DetectifAI key and restart the server. Saved and text-only analysis remain available.</p>}
     {onLoginVerified && <p>Record 8–15 seconds of your own voice, then press Verify sign-in. Your existing profile is reused. Live speaker and authenticity checks upload audio to DetectifAI and use credits. This check cannot send money.</p>}
     <p role="status"><strong>{enrolled ? 'Verified: owner voice registered.' : 'Not verified: enroll the owner voice first.'}</strong> {enrolled ? 'Each payment must match this person in a fresh voice check.' : 'All payments are blocked until enrollment succeeds.'}</p>
     {!onLoginVerified && !onOwnerEnrolled && <fieldset className="space-y-2"><legend>Choose a task</legend>
@@ -197,7 +200,7 @@ export function AudioAnalysisPanel({ onPaymentCompleted, payees = [], requestedP
     {purpose === 'analysis' && <label className="flex items-start gap-2"><input type="checkbox" checked={live} disabled={busy || recording} onChange={e => { setLive(e.target.checked); setResult(null); }} />
       Run live Aletheia + Eidos checks when no saved result exists. This uploads audio to DetectifAI and spends credits.</label>
     }
-    <Button type="button" disabled={!audio || recording || busy || (purpose === 'enroll' && (!consent || enrolled || (!!onOwnerEnrolled && !!organizationName && !registryConsent))) || (purpose === 'payment' && !enrolled)} onClick={() => analyze()}>
+    <Button type="button" disabled={!audio || recording || busy || (apiKeyConfigured === false && (!!onLoginVerified || purpose !== 'analysis' || live)) || (purpose === 'enroll' && (!consent || enrolled || (!!onOwnerEnrolled && !!organizationName && !registryConsent))) || (purpose === 'payment' && !enrolled)} onClick={() => analyze()}>
       {busy ? 'Checking…' : onLoginVerified ? 'Verify sign-in' : purpose === 'enroll' ? 'Submit owner voice' : purpose === 'payment' ? 'Run' : live ? 'Analyze with live checks' : 'Analyze with saved checks'}</Button>
     {purpose === 'analysis' && <><p>Saved mode makes no paid API request. New audio stays unverified unless live checks complete.</p>
     <details><summary>Analyze typed text instead</summary>

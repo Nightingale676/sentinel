@@ -68,8 +68,8 @@ def analyze(payload):
             import requests
             load_dotenv(ROOT / ".env")
             key = os.getenv("DETECTIF_API_KEY", "").strip()
-            if not key or key == "your_actual_api_key":
-                raise InputError("Set the backend DETECTIF_API_KEY before enrollment.")
+            if not key or key.lower() in {"your_actual_api_key", "api key not set", "your_api_key", "my_api_key"}:
+                raise InputError("API key not set. Configure DETECTIF_API_KEY in the backend .env file before enrollment.")
             with audio.open("rb") as stream:
                 response = requests.post("https://platform.detectif.ai/v1/speakers/enroll",
                     headers={"Authorization": f"Bearer {key}", "Idempotency-Key": hashlib.sha256((speaker_id + ':enroll:' + digest).encode()).hexdigest()},
@@ -96,8 +96,8 @@ def analyze(payload):
             import requests
             load_dotenv(ROOT / ".env")
             key = os.getenv("DETECTIF_API_KEY", "").strip()
-            if not key or key == "your_actual_api_key":
-                raise InputError("Set DETECTIF_API_KEY in the project's backend .env first.")
+            if not key or key.lower() in {"your_actual_api_key", "api key not set", "your_api_key", "my_api_key"}:
+                raise InputError("API key not set. Configure DETECTIF_API_KEY in the backend .env file before live verification.")
             # Stable request key avoids another charge on retries of the same recording.
             idempotency = hashlib.sha256((speaker_id + ":combined:v1:" + digest).encode()).hexdigest()
             credits = None  # A lost response cannot establish whether credits were charged.
